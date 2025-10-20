@@ -1,37 +1,22 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
 
-st.set_page_config(page_title="PredictX Pro Ultra V2", layout="wide", page_icon="⚽")
+import streamlit as st
+import random
+
+st.set_page_config(page_title="PredictX Pro Ultra V2", layout="centered")
 
 st.title("⚽ PredictX Pro Ultra V2")
-st.caption("AI-Powered Football Prediction Analyzer")
+st.write("Welcome to your AI-powered football prediction simulator!")
 
-# Sidebar inputs
-st.sidebar.header("Match Data Entry")
-predictions = st.sidebar.text_area("Enter Predictions (Team A vs Team B - Predicted Score):")
-results = st.sidebar.text_area("Enter Actual Results (Team A vs Team B - Final Score):")
+# Input fields
+team1 = st.text_input("Enter Team A")
+team2 = st.text_input("Enter Team B")
 
-if st.sidebar.button("Analyze"):
-    st.success("Analysis complete! (Demo Mode)")
-
-# Dummy Data
-data = pd.DataFrame({
-    "Match": ["Man Utd vs Chelsea", "Arsenal vs Spurs", "Liverpool vs City"],
-    "Predicted": ["2-1", "1-1", "1-2"],
-    "Actual": ["2-1", "1-2", "1-2"],
-    "Result": ["Exact", "Close", "Exact"]
-})
-
-# Accuracy Calculation
-accuracy = (data["Result"] == "Exact").sum() / len(data) * 100
-
-# Display
-st.metric("Prediction Accuracy", f"{accuracy:.1f}%")
-fig = px.pie(data, names="Result", title="Prediction Breakdown", color_discrete_sequence=px.colors.qualitative.Dark2)
-st.plotly_chart(fig, use_container_width=True)
-
-st.dataframe(data)
+if st.button("Predict"):
+    if team1 and team2:
+        winner = random.choice([team1, team2])
+        st.success(f"🏆 Predicted Winner: **{winner}**")
+    else:
+        st.warning("Please enter both team names.")
 
 st.markdown("---")
-st.caption("PredictX Pro Ultra V2 — Generated Streamlit dashboard. Customize to add AI models or external result fetching.")
+st.caption("Powered by PredictX AI ⚡")
