@@ -1,4 +1,4 @@
-
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,91 +11,94 @@ import plotly.express as px
 # ---------- CONFIG ----------
 st.set_page_config(page_title="PredictX Pro Ultra V3", layout="wide", page_icon="⚽")
 DATA_FILE = "predictions.csv"
-API_KEY = "2debb76dcc5bbe808e64d70de9b17abf"
+API_KEY = "YOUR_API_KEY_HERE"   # <<<--- Replace with your API-FOOTBALL key (keep quotes)
 API_BASE = "https://v3.football.api-sports.io"
-
 HEADERS = {"x-apisports-key": API_KEY}
 
-# ---------- UTILITIES ----------
+# ---------- DATA HELPERS ----------
 def ensure_data_file():
+    """Create the CSV with correct columns if it doesn't exist."""
     if not os.path.exists(DATA_FILE):
-        df = pd.DataFrame(columns=[
+        df0 = pd.DataFrame(columns=[
             "id", "date", "team_a", "team_b", "predicted_winner",
             "prediction_method", "confidence", "actual_result",
             "outcome", "notes", "created_at", "updated_at"
         ])
-        df.to_csv(DATA_FILE, index=False)
+        df0.to_csv(DATA_FILE, index=False)
 
 def load_data():
+    """Return a DataFrame (never None)."""
     ensure_data_file()
-    return pd.read_csv(DATA_FILE, dtype=str)
+    df = pd.read_csv(DATA_FILE, dtype=str)
+    expected = ["id","date","team_a","team_b","predicted_winner","prediction_method",
+                "confidence","actual_result","outcome","notes","created_at","updated_at"]
+    for c in expected:
+        if c not in df.columns:
+            df[c] = ""
+    return df
 
 def save_data(df):
+    """Persist DataFrame to CSV safely."""
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("save_data expects a pandas DataFrame, got: %s" % type(df))
     df.to_csv(DATA_FILE, index=False)
 
-def normalize_team_name(name):
-    return name.strip()
-
-# API helpers with graceful handling
+# ---------- API HELPERS ----------
 def api_get(endpoint, params=None):
     try:
-        resp = requests.get(f"{API_BASE}{endpoint}", headers=HEADERS, params=(params or {}), timeout=10)
-        if resp.status_code == 200:
-            return resp.json()
-        else:
-            return {"error": f"API status {resp.status_code}", "detail": resp.text}
+        resp = requests.get(f"{API_BASE}{endpoint}", headers=HEADERS, params=(params or {}), timeout=12)
+        # If API returns non-JSON or error, return an object indicating error
+        try:
+            data = resp.json()
+        except:
+            return {"error": f"Non-JSON response, status {resp.status_code}"}
+        if resp.status_code != 200:
+            return {"error": f"Status {resp.status_code}", "detail": data}
+        return data
     except Exception as e:
         return {"error": str(e)}
 
 def find_team_id(team_name):
-    try:
-        data = api_get("/teams", params={"search": team_name})
-        if data is None or "error" in data:
-            return None
-        resp = data.get("response", [])
-        if not resp:
-            return None
-        # pick best match (first)
-        return resp[0]["team"]["id"], resp[0]["team"]["name"]
-    except:
-        return None
+    """Find best matching team id and canonical name, or return (None, None)."""
+    data = api_get("/teams", params={"search": team_name})
+    if not data or "error" in data:
+        return None, None
+    resp = data.get("response", [])
+    if not resp:
+        return None, None
+    team_obj = resp[0].get("team", {})
+    return team_obj.get("id"), team_obj.get("name")
 
 def get_recent_matches(team_id, last_n=10):
-    # Try last season and recent fixtures: use last N fixtures endpoint (fixtures)
-    params = {"team": team_id, "last": last_n}
-    data = api_get("/fixtures", params=params)
-    if data is None or "error" in data:
-        return None
+    data = api_get("/fixtures", params={"team": team_id, "last": last_n})
+    if not data or "error" in data:
+        return []
     return data.get("response", [])
 
 def get_head_to_head(team_a_id, team_b_id, last_n=10):
-    params = {"h2h": f"{team_a_id}-{team_b_id}", "last": last_n}
-    data = api_get("/fixtures", params=params)
-    if data is None or "error" in data:
-        return None
+    data = api_get("/fixtures", params={"h2h": f"{team_a_id}-{team_b_id}", "last": last_n})
+    if not data or "error" in data:
+        return []
     return data.get("response", [])
 
-# Simple scoring function using goals, recent form and h2h
+# ---------- PREDICTION LOGIC ----------
 def compute_team_score(team_id):
-    # returns a dict of stats and score
-    stats = {"goals_for": 0, "goals_against": 0, "wins": 0, "draws": 0, "losses": 0, "matches": 0, "form_score": 0}
+    """Compute simple heuristic score using recent matches (goals & form)."""
+    stats = {"goals_for": 0, "goals_against": 0, "wins": 0, "draws": 0, "losses": 0, "matches": 0}
     matches = get_recent_matches(team_id, last_n=10)
     if not matches:
         return stats, 0.0
     for m in matches:
-        # determine if team is home or away
-        fixture = m.get("fixture", {})
-        teams = m.get("teams", {})
         goals = m.get("goals", {})
-        home = teams.get("home", {}).get("id")
-        away = teams.get("away", {}).get("id")
+        teams = m.get("teams", {})
+        home_id = teams.get("home", {}).get("id")
+        away_id = teams.get("away", {}).get("id")
         home_goals = goals.get("home")
         away_goals = goals.get("away")
-        # if fixture not finished, skip
+        # skip unfinished fixtures
         if home_goals is None or away_goals is None:
             continue
-        stats["matches"] += 1
-        if team_id == home:
+        if team_id == home_id:
             gf, ga = home_goals, away_goals
             if home_goals > away_goals:
                 stats["wins"] += 1
@@ -111,108 +114,92 @@ def compute_team_score(team_id):
                 stats["draws"] += 1
             else:
                 stats["losses"] += 1
-        stats["goals_for"] += gf
-        stats["goals_against"] += ga
-    # form score: wins*3 + draws*1, normalized
+        stats["matches"] += 1
+        stats["goals_for"] += (gf or 0)
+        stats["goals_against"] += (ga or 0)
     if stats["matches"] > 0:
-        stats["form_score"] = (stats["wins"]*3 + stats["draws"]) / (stats["matches"]*3)
-    # final heuristic score: weights to goals_for per match + form score
-    gf_per_match = stats["goals_for"] / stats["matches"] if stats["matches"]>0 else 0
-    score = 0.5 * gf_per_match + 0.5 * stats["form_score"] * 3
+        form_score = (stats["wins"]*3 + stats["draws"]) / (stats["matches"]*3)
+    else:
+        form_score = 0
+    gf_per = stats["goals_for"] / stats["matches"] if stats["matches"]>0 else 0
+    score = 0.5 * gf_per + 0.5 * form_score * 3
     return stats, score
 
 def compute_prediction_fixed(team_a, team_b):
     """
-    If stored prediction exists for exact (team_a vs team_b), return it.
-    Otherwise compute via API stats and save it (fixed).
+    Return stored fixed prediction if exists, else compute using API and save it.
+    Returns dict with saved fields or {'error':...}
     """
     df = load_data()
-    # canonical key (order-insensitive or enforce A vs B as given)
-    # We'll store as team_a|team_b as provided (case-insensitive trimmed)
-    a = normalize_team_name(team_a)
-    b = normalize_team_name(team_b)
-    # look for existing row with same teams (both directions)
-    row = df[(df['team_a'].str.lower() == a.lower()) & (df['team_b'].str.lower() == b.lower())]
-    if row.empty:
-        # try reverse
-        row = df[(df['team_a'].str.lower() == b.lower()) & (df['team_b'].str.lower() == a.lower())]
-        if not row.empty:
-            # if stored with reverse, return stored prediction (but flip perspective)
-            stored = row.iloc[0].to_dict()
-            return stored
-    else:
-        stored = row.iloc[0].to_dict()
-        return stored
+    a = team_a.strip()
+    b = team_b.strip()
 
-    # No stored record -> compute using API
-    ta = find_team_id(a)
-    tb = find_team_id(b)
-    if not ta or not tb:
-        return {"error": "Team not found"}
+    # Try finding stored exact match (either order)
+    match_row = df[
+        ((df['team_a'].str.lower() == a.lower()) & (df['team_b'].str.lower() == b.lower())) |
+        ((df['team_a'].str.lower() == b.lower()) & (df['team_b'].str.lower() == a.lower()))
+    ]
+    if not match_row.empty:
+        # return first stored record
+        row = match_row.iloc[0].to_dict()
+        return row
 
-    team_a_id, team_a_name = ta
-    team_b_id, team_b_name = tb
+    # No stored prediction - compute now
+    ta_id, ta_name = find_team_id(a)
+    tb_id, tb_name = find_team_id(b)
+    if not ta_id or not tb_id:
+        return {"error": "Could not find one or both teams via API."}
 
-    # compute stats and scores
-    stats_a, score_a = compute_team_score(team_a_id)
-    stats_b, score_b = compute_team_score(team_b_id)
+    stats_a, score_a = compute_team_score(ta_id)
+    stats_b, score_b = compute_team_score(tb_id)
 
-    # head-to-head advantage
-    h2h = get_head_to_head(team_a_id, team_b_id, last_n=10)
-    h2h_adv = 0
+    h2h = get_head_to_head(ta_id, tb_id, last_n=10)
+    a_wins = b_wins = draws = 0
     if h2h:
-        # count results favouring a vs b
-        a_wins = 0
-        b_wins = 0
-        draws = 0
         for m in h2h:
             goals = m.get("goals", {})
             teams = m.get("teams", {})
-            h_id = teams.get("home", {}).get("id")
-            a_id = team_a_id
-            # ensure finished
             if goals.get("home") is None or goals.get("away") is None:
                 continue
-            if (m.get('teams', {}).get('home', {}).get('id') == team_a_id and goals['home'] > goals['away']) or \
-               (m.get('teams', {}).get('away', {}).get('id') == team_a_id and goals['away'] > goals['home']):
+            home_id = teams.get("home", {}).get("id")
+            away_id = teams.get("away", {}).get("id")
+            if (home_id == ta_id and goals.get("home") > goals.get("away")) or (away_id == ta_id and goals.get("away") > goals.get("home")):
                 a_wins += 1
-            elif (m.get('teams', {}).get('home', {}).get('id') == team_b_id and goals['home'] > goals['away']) or \
-                 (m.get('teams', {}).get('away', {}).get('id') == team_b_id and goals['away'] > goals['home']):
+            elif (home_id == tb_id and goals.get("home") > goals.get("away")) or (away_id == tb_id and goals.get("away") > goals.get("home")):
                 b_wins += 1
             else:
                 draws += 1
-        if (a_wins + b_wins + draws) > 0:
-            h2h_adv = (a_wins - b_wins) / max(1, (a_wins + b_wins + draws))
+    h2h_adv = 0
+    denom = (a_wins + b_wins + draws)
+    if denom > 0:
+        h2h_adv = (a_wins - b_wins) / denom
 
-    # final combined score with weights
     combined_a = score_a + 0.5 * h2h_adv
     combined_b = score_b - 0.5 * h2h_adv
 
-    # confidence metric (0-1)
     diff = combined_a - combined_b
-    confidence = float(min(0.99, max(0.01, 0.5 + diff/4)))  # map diff to 0-1 roughly
-
+    confidence = float(min(0.99, max(0.01, 0.5 + diff/4)))
     if combined_a > combined_b:
-        predicted = team_a
+        predicted = a
     elif combined_b > combined_a:
-        predicted = team_b
+        predicted = b
     else:
         predicted = "Draw"
 
-    # Save to CSV as fixed prediction
+    # Prepare new row
     df = load_data()
-    new_id = 1
-    if not df.empty:
-        try:
-            new_id = int(df['id'].astype(int).max()) + 1
-        except:
-            new_id = len(df) + 1
+    try:
+        existing_ids = pd.to_numeric(df['id'], errors='coerce')
+        max_id = int(existing_ids.max()) if not existing_ids.empty and not pd.isna(existing_ids.max()) else 0
+    except Exception:
+        max_id = len(df)
+    new_id = int(max_id) + 1
     now = datetime.utcnow().isoformat()
     new_row = {
         "id": new_id,
         "date": datetime.utcnow().strftime("%Y-%m-%d"),
-        "team_a": team_a,
-        "team_b": team_b,
+        "team_a": a,
+        "team_b": b,
         "predicted_winner": predicted,
         "prediction_method": "stats_h2h",
         "confidence": round(confidence, 3),
@@ -221,187 +208,143 @@ def compute_prediction_fixed(team_a, team_b):
         "notes": f"score_a:{round(combined_a,3)} score_b:{round(combined_b,3)}",
         "created_at": now,
         "updated_at": now
- df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+    }
+    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     save_data(df)
     return new_row
 
-# ---------- UI PAGES ----------
+# ---------- UI ----------
 st.markdown("<style> .card{background: rgba(10,14,23,0.75); padding:12px; border-radius:10px} </style>", unsafe_allow_html=True)
 st.title("⚽ PredictX Pro Ultra V3")
 st.caption("AI-Powered Football Prediction Analyzer — Predictive Hub & Review System")
 
-# Sidebar navigation
-page = st.sidebar.selectbox("Navigate", ["Match Predictor", "Reviews Book", "Predictive Hub"])
+# Sidebar/Top navigation using tabs
+menu = st.tabs(["⚽ Predictive Hub", "📘 Reviews Book", "📊 Performance Chart"])
 
-# ---------------- Match Predictor ----------------
-if page == "Match Predictor":
-    st.header("Match Predictor")
-    st.markdown("Enter teams and get a fixed prediction (uses live stats & head-to-head).")
-    col1, col2 = st.columns([2,2])
-    with col1:
-        team_a = st.text_input("Team A (home)", value="")
-    with col2:
-        team_b = st.text_input("Team B (away)", value="")
-    if st.button("Get Prediction"):
-        if not team_a or not team_b:
-            st.warning("Please enter both team names.")
+# ---------------- Predictive Hub ----------------
+with menu[0]:
+    st.header("⚽ Predictive Hub")
+    st.markdown("Choose a live match or enter teams manually. Predictions are stored and fixed after creation.")
+
+    # Live fixture picker
+    team1 = ""
+    team2 = ""
+    try:
+        today = datetime.utcnow().date()
+        fixture_resp = api_get("/fixtures", params={"date": today.isoformat()})
+        if fixture_resp and "error" not in fixture_resp and fixture_resp.get("results", 0) > 0:
+            matches = []
+            for m in fixture_resp.get("response", []):
+                home = m.get("teams", {}).get("home", {}).get("name")
+                away = m.get("teams", {}).get("away", {}).get("name")
+                league = m.get("league", {}).get("name")
+                matches.append({"label": f"{home} vs {away} — {league}", "home": home, "away": away})
+            labels = [x["label"] for x in matches]
+            sel = st.selectbox("Select today's match (or leave blank to enter manually)", [""] + labels)
+            if sel:
+                chosen = next((x for x in matches if x["label"] == sel), None)
+                if chosen:
+                    team1 = chosen["home"]
+                    team2 = chosen["away"]
+                    st.info(f"Selected: {team1} vs {team2}")
         else:
-            with st.spinner("Fetching data and computing prediction..."):
-                res = compute_prediction_fixed(team_a, team_b)
+            st.info("No fixtures found for today (or API returned none). You may enter teams manually.")
+    except Exception as e:
+        st.warning("Live fixtures unavailable: " + str(e))
+        st.info("You may enter teams manually.")
+
+    # manual fallback inputs if not selected
+    if not team1:
+        col1, col2 = st.columns(2)
+        with col1:
+            team1 = st.text_input("Home team", value="")
+        with col2:
+            team2 = st.text_input("Away team", value="")
+
+    if st.button("Get Prediction"):
+        if not team1 or not team2:
+            st.warning("Enter both teams.")
+        else:
+            with st.spinner("Computing prediction..."):
+                res = compute_prediction_fixed(team1, team2)
                 if isinstance(res, dict) and res.get("error"):
                     st.error("Error: " + str(res.get("error")))
                 else:
-                    st.success(f"Predicted Winner: **{res['predicted_winner']}** (confidence: {res['confidence']})")
-                    # show summary stats if available
+                    st.success(f"Predicted Winner: **{res.get('predicted_winner')}** (confidence: {res.get('confidence')})")
                     st.markdown("**Prediction details:**")
                     st.write("Method:", res.get("prediction_method"))
                     st.write("Notes:", res.get("notes"))
-                    st.write("Saved as a fixed prediction (it will not change unless you update it in Reviews Book).")
+                    st.write("Saved prediction ID:", res.get("id"))
 
 # ---------------- Reviews Book ----------------
-elif page == "Reviews Book":
-    st.header("Reviews Book")
-    st.markdown("View all saved predictions. Mark results when real match outcome is known.")
+with menu[1]:
+    st.header("📘 Reviews Book")
+    st.markdown("All saved predictions. Update with actual results and mark Correct or Wrong.")
+
     df = load_data()
     if df.empty:
         st.info("No predictions yet.")
     else:
-        # Show table and allow selection
-        st.dataframe(df[['id','date','team_a','team_b','predicted_winner','confidence','actual_result','outcome']])
+        df_display = df.copy()
+        display_cols = ["id","date","team_a","team_b","predicted_winner","confidence","actual_result","outcome","notes","created_at"]
+        st.dataframe(df_display[display_cols].sort_values("created_at", ascending=False))
+
         st.markdown("### Update a prediction result")
         sid = st.text_input("Enter prediction ID to update (see table above)", value="")
         if sid:
             try:
                 sid_int = int(sid)
-            except:
-                st.error("Enter a numeric ID.")
-                sid_int = None
-            if sid_int:
-                row = df[df['id'].astype(int) == sid_int]
-                if row.empty:
+                idx = df.index[df['id'].astype(int) == sid_int]
+                if idx.empty:
                     st.error("ID not found.")
                 else:
-                    selected = row.iloc[0].to_dict()
-                    st.write("Selected:", selected['team_a'], "vs", selected['team_b'], "| Predicted:", selected['predicted_winner'])
-                    actual = st.text_input("Enter actual result (e.g. 2-1 or Draw)", value=selected.get('actual_result',''))
+                    i = idx[0]
+                    st.write("Selected:", df.at[i, "team_a"], "vs", df.at[i, "team_b"], " | Predicted:", df.at[i, "predicted_winner"])
+                    actual = st.text_input("Enter actual result (e.g. 2-1 or Draw)", value=df.at[i, "actual_result"])
                     outcome = st.selectbox("Outcome", ["", "Correct", "Wrong", "Draw"], index=0)
-                    note = st.text_area("Notes (optional)", value=selected.get('notes',''))
+                    note = st.text_area("Notes (optional)", value=df.at[i, "notes"])
                     if st.button("Save result"):
-                        # update
-                        idx = df.index[df['id'].astype(int) == sid_int][0]
-                        df.at[idx, 'actual_result'] = actual
-                        df.at[idx, 'outcome'] = outcome
-                        df.at[idx, 'notes'] = note
-                        df.at[idx, 'updated_at'] = datetime.utcnow().isoformat()
+                        df.at[i, 'actual_result'] = actual
+                        df.at[i, 'outcome'] = outcome
+                        df.at[i, 'notes'] = note
+                        df.at[i, 'updated_at'] = datetime.utcnow().isoformat()
                         save_data(df)
                         st.success("Prediction updated.")
                         st.experimental_rerun()
+            except ValueError:
+                st.error("Please enter a numeric ID.")
+
         # Download CSV
         csv_buf = io.StringIO()
         df.to_csv(csv_buf, index=False)
         st.download_button("Download predictions CSV", data=csv_buf.getvalue(), file_name="predictions.csv", mime="text/csv")
-        # Show accuracy chart
-        st.markdown("### Accuracy Chart")
-        chart_df = df[df['outcome'].isin(["Correct","Wrong"])]
-        if chart_df.empty:
-            st.info("No results marked yet. Mark outcomes to see accuracy over time.")
+
+# ---------------- Performance Chart ----------------
+with menu[2]:
+    st.header("📊 Performance Chart")
+    st.markdown("See how your predictions performed over time.")
+
+    df = load_data()
+    if df.empty or df['outcome'].isin(["Correct","Wrong"]).sum() == 0:
+        st.info("No completed results to chart yet. Mark outcomes in Reviews Book.")
+    else:
+        chart_df = df[df['outcome'].isin(["Correct","Wrong"])].copy()
+        chart_df['created_at'] = pd.to_datetime(chart_df['created_at'])
+        chart_df = chart_df.sort_values('created_at')
+        chart_df['is_correct'] = (chart_df['outcome'] == "Correct").astype(int)
+        # daily accuracy
+        summary = chart_df.groupby(pd.Grouper(key='created_at', freq='D')).agg({'is_correct':'mean','id':'count'}).reset_index()
+        summary = summary.rename(columns={'is_correct':'accuracy','id':'matches'})
+        if summary.empty:
+            st.info("Not enough data yet to show chart.")
         else:
-            chart_df['created_at'] = pd.to_datetime(chart_df['created_at'])
-            chart_df = chart_df.sort_values('created_at')
-            chart_df['is_correct'] = chart_df['outcome'] == "Correct"
-            summary = chart_df.groupby(pd.Grouper(key='created_at', freq='D')).agg({'is_correct':'mean','id':'count'}).reset_index()
-            summary = summary.rename(columns={'is_correct':'accuracy','id':'matches'})
-            fig = px.bar(summary, x='created_at', y='accuracy', labels={'created_at':'Date','accuracy':'Accuracy'}, title='Daily Accuracy (Correct / Total)')
+            fig = px.line(summary, x='created_at', y='accuracy', title='Daily Accuracy (fraction correct)')
+            fig.update_yaxes(tickformat=".0%", range=[0,1])
             st.plotly_chart(fig, use_container_width=True)
 
-# ---------------- Predictive Hub (advanced analytics) ----------------
-elif page == "Predictive Hub":
-    st.header("Predictive Hub — in-depth team analysis")
-    st.markdown("Compare historical form, goals, head-to-head, and see why the model predicted a team.")
-    ta = st.text_input # --- LIVE FIXTURE PICKER ---
-st.subheader("📅 Choose a Live or Upcoming Match")
-
-headers = {"x-apisports-key": API_KEY}
-base_url = "https://v3.football.api-sports.io"
-
-try:
-    import datetime as dt
-    today = dt.date.today()
-
-    response = requests.get(f"{base_url}/fixtures?date={today}", headers=headers)
-    data = response.json()
-
-    if data["results"] > 0:
-        matches = []
-        for match in data["response"]:
-            home = match["teams"]["home"]["name"]
-            away = match["teams"]["away"]["name"]
-            league = match["league"]["name"]
-            matches.append(f"{home} vs {away} — {league}")
-
-        selected_match = st.selectbox("Select a match", matches)
-        if selected_match:
-            parts = selected_match.split(" vs ")
-            team1 = parts[0].strip()
-            team2 = parts[1].split(" — ")[0].strip()
-            st.info(f"You selected **{team1} vs {team2}** from {match['league']['name']}")
-    else:
-        st.warning("No live fixtures found for today. You can still enter teams manually.")
-        team1 = st.text_input("Enter Home Team")
-        team2 = st.text_input("Enter Away Team")
-
-except Exception as e:
-    st.error(f"Error fetching live fixtures: {e}")
-    team1 = st.text_input("Enter Home Team")
-    team2 = st.text_input("Enter Away Team")
-    tb = st.text_input
-    if st.button("Analyze teams"):
-        if not ta or not tb:
-            st.warning("Enter both teams.")
-        else:
-            with st.spinner("Fetching deep stats..."):
-                ida = find_team_id(ta)
-                idb = find_team_id(tb)
-                if not ida or not idb:
-                    st.error("Could not find one or both teams. Try alternative names.")
-                else:
-                    ida_id, ida_name = ida
-                    idb_id, idb_name = idb
-                    st.subheader(f"{ida_name} vs {idb_name}")
-                    # team A stats
-                    stats_a, score_a = compute_team_score(ida_id)
-                    stats_b, score_b = compute_team_score(idb_id)
-                    colA, colB = st.columns(2)
-                    with colA:
-                        st.markdown(f"### {ida_name} — Recent summary")
-                        st.write(stats_a)
-                        st.write("Heuristic score:", round(score_a,3))
-                    with colB:
-                        st.markdown(f"### {idb_name} — Recent summary")
-                        st.write(stats_b)
-                        st.write("Heuristic score:", round(score_b,3))
-                    # head to head
-                    h2h = get_head_to_head(ida_id, idb_id, last_n=10)
-                    if h2h:
-                        st.markdown("### Head-to-Head (last matches)")
-                        hdf_rows = []
-                        for m in h2h:
-                            fixture = m.get('fixture',{})
-                            date = fixture.get('date','')[:10]
-                            teams = m.get('teams',{})
-                            goals = m.get('goals',{})
-                            home = teams.get('home', {}).get('name')
-                            away = teams.get('away', {}).get('name')
-                            score = score = f"{goals.get('home')}-{goals.get('away')}"
-                            hdf_rows.append({"date":date,"home":home,"away":away,"score":score})
-                        hdf = pd.DataFrame(hdf_rows)
-                        st.dataframe(hdf)
-                    else:
-                        st.info("No head-to-head data available.")
-                    # Suggestion
-                    if score_a > score_b:
-                        st.success(f"Model suggests: **{ta}** more likely (score {round(score_a,3)} vs {round(score_b,3)})")
-                    elif score_b > score_a:
-                        st.success(f"Model suggests: **{tb}** more likely (score {round(score_b,3)} vs {round(score_a,3)})")
-                    else:
-                        st.info("Too close to call — consider manual review.")
+            # simple overall metrics
+            total = len(chart_df)
+            correct = int(chart_df['is_correct'].sum())
+            accuracy = correct / total * 100
+            st.metric("Total Marked Matches", total)
+            st.metric("Overall Accuracy", f"{accuracy:.1f}%")
