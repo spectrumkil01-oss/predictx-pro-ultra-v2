@@ -12,7 +12,7 @@ import plotly.express as px
 # ---------- CONFIG ----------
 st.set_page_config(page_title="PredictX Pro Ultra V3", layout="wide", page_icon="⚽")
 DATA_FILE = "predictions.csv"
-API_KEY = "YOUR_API_KEY_HERE"   # <<<--- Replace with your API-FOOTBALL key
+API_KEY ="2debb76dcc5bbe808e64d70de9b17abf"<<<--- Replace with your API-FOOTBALL key
 API_BASE = "https://v3.football.api-sports.io"
 
 HEADERS = {"x-apisports-key": API_KEY}
