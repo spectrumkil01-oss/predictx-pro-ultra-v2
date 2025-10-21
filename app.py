@@ -319,8 +319,43 @@ elif page == "Reviews Book":
 elif page == "Predictive Hub":
     st.header("Predictive Hub — in-depth team analysis")
     st.markdown("Compare historical form, goals, head-to-head, and see why the model predicted a team.")
-    ta = st.text_input("Team A (type and press Enter)", value="")
-    tb = st.text_input("Team B (type and press Enter)", value="")
+    ta = st.text_input # --- LIVE FIXTURE PICKER ---
+st.subheader("📅 Choose a Live or Upcoming Match")
+
+headers = {"x-apisports-key": API_KEY}
+base_url = "https://v3.football.api-sports.io"
+
+try:
+    import datetime as dt
+    today = dt.date.today()
+
+    response = requests.get(f"{base_url}/fixtures?date={today}", headers=headers)
+    data = response.json()
+
+    if data["results"] > 0:
+        matches = []
+        for match in data["response"]:
+            home = match["teams"]["home"]["name"]
+            away = match["teams"]["away"]["name"]
+            league = match["league"]["name"]
+            matches.append(f"{home} vs {away} — {league}")
+
+        selected_match = st.selectbox("Select a match", matches)
+        if selected_match:
+            parts = selected_match.split(" vs ")
+            team1 = parts[0].strip()
+            team2 = parts[1].split(" — ")[0].strip()
+            st.info(f"You selected **{team1} vs {team2}** from {match['league']['name']}")
+    else:
+        st.warning("No live fixtures found for today. You can still enter teams manually.")
+        team1 = st.text_input("Enter Home Team")
+        team2 = st.text_input("Enter Away Team")
+
+except Exception as e:
+    st.error(f"Error fetching live fixtures: {e}")
+    team1 = st.text_input("Enter Home Team")
+    team2 = st.text_input("Enter Away Team")
+    tb = st.text_input
     if st.button("Analyze teams"):
         if not ta or not tb:
             st.warning("Enter both teams.")
