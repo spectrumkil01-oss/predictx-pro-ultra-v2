@@ -358,7 +358,7 @@ elif page == "Predictive Hub":
                             goals = m.get('goals',{})
                             home = teams.get('home', {}).get('name')
                             away = teams.get('away', {}).get('name')
-                            score = f\"{goals.get('home')}-{goals.get('away')}\"
+                            score = score = f"{goals.get('home')}-{goals.get('away')}"
                             hdf_rows.append({"date":date,"home":home,"away":away,"score":score})
                         hdf = pd.DataFrame(hdf_rows)
                         st.dataframe(hdf)
