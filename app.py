@@ -221,8 +221,7 @@ def compute_prediction_fixed(team_a, team_b):
         "notes": f"score_a:{round(combined_a,3)} score_b:{round(combined_b,3)}",
         "created_at": now,
         "updated_at": now
-    }
-    df = df.append(new_row, ignore_index=True)
+ df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     save_data(df)
     return new_row
 
