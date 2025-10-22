@@ -75,19 +75,23 @@ def get_recent_matches(team_id, last_n=10):
         return []
     return data.get("response", [])
 
-def get_head_to_head # Fetch all teams from the API (once)
-teams_response = requests.get(
-    f"https://v3.football.api-sports.io/teams?league=39&season=2023",
-    headers={"x-apisports-key": API_KEY}
-).json()
+def def get_team_id(team_name):
+    # Try to find the team globally
+    url = f"https://v3.football.api-sports.io/teams?search={team_name}"
+    headers = {"x-apisports-key": API_KEY}
+    response = requests.get(url, headers=headers).json()
 
-all_teams = [t["team"]["name"] for t in teams_response["response"]]
+    if response["response"]:
+        return response["response"][0]["team"]["id"]
+    else:
+        return None
 
-team_a = find_closest_team_name(team_a, all_teams)
-team_b = find_closest_team_name(team_b, all_teams)
 
-if not team_a or not team_b:
-    return {"error": "Could not find one or both teams via API. Try clearer names."} last_n=10):
+team_a_id = get_team_id(team_a)
+team_b_id = get_team_id(team_b)
+
+if not team_a_id or not team_b_id:
+    return {"error": f"Could not find one or both teams via API. Try clearer names or check spelling."} last_n=10):
     data = api_get("/fixtures", params={"h2h": f"{team_a_id}-{team_b_id}", "last": last_n})
     if not data or "error" in data:
         return []
