@@ -304,7 +304,7 @@ with menu[1]:
         st.markdown("### Update a prediction result")
         sid = st.text_input("Enter prediction ID to update (see table above)", value="")
         if sid:
-            try:
+       try:
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
     st.download_button(
@@ -313,6 +313,8 @@ with menu[1]:
         file_name="predictions.csv",
         mime="text/csv"
     )
+except Exception as e:
+    st.error(f"⚠️ Error generating CSV: {e}")
 except Exception as e:
     st.error(f"⚠️ Error generating CSV: {e}")
                 sid_int = int(sid)
