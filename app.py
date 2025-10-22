@@ -1,5 +1,5 @@
 
-# app.py - PredictX Pro Ultra V3 (All-in-one)
+# app.py — PredictX Pro Ultra (clean, fixed, complete)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,18 +8,17 @@ import os
 import io
 from datetime import datetime, timedelta
 import plotly.express as px
-from textwrap import dedent
 
 # ---------- CONFIG ----------
-st.set_page_config(page_title="PredictX Pro Ultra V3", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="PredictX Pro Ultra", layout="wide", page_icon="⚽")
 DATA_FILE = "predictions.csv"
 
-# <<<-- YOUR API KEY INSERTED BELOW -->>>
-API_KEY = "2debb76dcc5bbe808e64d70de9b17abf"
+# <-- PUT YOUR API-FOOTBALL KEY HERE (keep quotes) -->
+API_KEY = "PUT_YOUR_API_KEY_HERE"
 API_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
-# ---------- STYLES (Dark Theme) ----------
+# ---------- STYLES (Dark) ----------
 st.markdown(
     """
     <style>
@@ -39,8 +38,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Header
-st.markdown('<div class="logo-title"><div class="title">⚽ PredictX Pro Ultra V3</div></div>', unsafe_allow_html=True)
+st.markdown('<div class="logo-title"><div class="title">⚽ PredictX Pro Ultra</div></div>', unsafe_allow_html=True)
 st.caption("AI-Powered Football Prediction Analyzer — Predictive Hub & Review System")
 
 # ---------- DATA HELPERS ----------
@@ -74,7 +72,7 @@ def api_get(endpoint, params=None):
         resp = requests.get(f"{API_BASE}{endpoint}", headers=HEADERS, params=(params or {}), timeout=12)
         try:
             data = resp.json()
-        except:
+        except Exception:
             return {"error": f"Non-JSON response, status {resp.status_code}"}
         if resp.status_code != 200:
             return {"error": f"Status {resp.status_code}", "detail": data}
@@ -144,10 +142,10 @@ def compute_team_score(team_id):
     return stats, score
 
 def compute_prediction_fixed(team_a, team_b):
+    # Return existing stored prediction or compute & store a new fixed prediction
     df = load_data()
     a = team_a.strip()
     b = team_b.strip()
-
     # check existing stored prediction (either order)
     match_row = df[
         ((df['team_a'].str.lower() == a.lower()) & (df['team_b'].str.lower() == b.lower())) |
@@ -199,7 +197,7 @@ def compute_prediction_fixed(team_a, team_b):
     else:
         predicted = "Draw"
 
-    # create new row
+    # prepare and save new row
     df = load_data()
     try:
         existing_ids = pd.to_numeric(df['id'], errors='coerce')
@@ -236,7 +234,7 @@ with menu[0]:
 
     team1 = ""
     team2 = ""
-    # live fixtures for today and next 2 days
+    # show live fixtures for today + next 2 days
     try:
         today = datetime.utcnow().date()
         dates_to_try = [today + timedelta(days=i) for i in range(0, 3)]
@@ -248,9 +246,8 @@ with menu[0]:
                     home = m.get("teams", {}).get("home", {}).get("name")
                     away = m.get("teams", {}).get("away", {}).get("name")
                     league = m.get("league", {}).get("name")
-                    match_id = m.get("fixture", {}).get("id")
                     label = f"{home} vs {away} — {league} ({d.isoformat()})"
-                    matches.append({"label": label, "home": home, "away": away, "fixture_id": match_id})
+                    matches.append({"label": label, "home": home, "away": away})
         if matches:
             labels = [x["label"] for x in matches]
             sel = st.selectbox("Select a live/upcoming match (or leave blank to enter manually)", [""] + labels)
@@ -304,19 +301,7 @@ with menu[1]:
         st.markdown("### Update a prediction result")
         sid = st.text_input("Enter prediction ID to update (see table above)", value="")
         if sid:
-       try:
-    csv_buf = io.StringIO()
-    df.to_csv(csv_buf, index=False)
-    st.download_button(
-        "Download Predictions CSV",
-        data=csv_buf.getvalue(),
-        file_name="predictions.csv",
-        mime="text/csv"
-    )
-except Exception as e:
-    st.error(f"⚠️ Error generating CSV: {e}")
-except Exception as e:
-    st.error(f"⚠️ Error generating CSV: {e}")
+            try:
                 sid_int = int(sid)
                 idx = df.index[df['id'].astype(int) == sid_int]
                 if idx.empty:
@@ -335,12 +320,18 @@ except Exception as e:
                         save_data(df)
                         st.success("Prediction updated.")
                         st.experimental_rerun()
-        # Download CSV
-        csv_buf = io.StringIO()
-        df.to_csv(csv_buf, index=False)
-        st.download_button("Download predictions CSV", data=csv_buf.getvalue(), file_name="predictions.csv", mime="text/csv")
+            except ValueError:
+                st.error("Please enter a numeric ID.")
 
-        # Accuracy Chart (bar by day)
+        # Download CSV safely
+        try:
+            csv_buf = io.StringIO()
+            df.to_csv(csv_buf, index=False)
+            st.download_button("Download predictions CSV", data=csv_buf.getvalue(), file_name="predictions.csv", mime="text/csv")
+        except Exception as e:
+            st.error(f"⚠️ Error generating CSV: {e}")
+
+        # Accuracy Chart
         st.markdown("### Accuracy Chart")
         chart_df = df[df['outcome'].isin(["Correct","Wrong"])]
         if chart_df.empty:
@@ -354,10 +345,10 @@ except Exception as e:
             fig = px.bar(summary, x='created_at', y='accuracy', labels={'created_at':'Date','accuracy':'Accuracy'}, title='Daily Accuracy (Correct / Total)')
             st.plotly_chart(fig, use_container_width=True)
 
-# ---------------- Update Results (auto-fetch) ----------------
+# ---------------- Update Results ----------------
 with menu[2]:
-    st.header("📝 Update Results (Auto-fetch live scores)")
-    st.markdown("Pick a saved prediction and try to fetch the actual match result from the API.")
+    st.header("📝 Update Results (Auto-fetch)")
+    st.markdown("Pick a saved prediction and attempt to fetch the actual match result from the API.")
 
     df = load_data()
     if df.empty:
@@ -375,53 +366,57 @@ with menu[2]:
             st.write("Selected:", team_a, "vs", team_b)
             if st.button("🔍 Fetch Live Result for selected"):
                 try:
-                    # search fixtures by team name near the saved date
                     saved_date = df.loc[sel, 'date']
-                    url = f"{API_BASE}/fixtures?team={find_team_id(team_a)[0]}&date={saved_date}"
-                    resp = requests.get(url, headers=HEADERS, timeout=12).json()
-                    fixtures = resp.get("response", [])
-                    found = None
-                    for fx in fixtures:
-                        home = fx['teams']['home']['name']
-                        away = fx['teams']['away']['name']
-                        if (team_a.lower() in home.lower() and team_b.lower() in away.lower()) or (team_a.lower() in away.lower() and team_b.lower() in home.lower()):
-                            found = fx
-                            break
-                    if not found:
-                        st.error("Could not find a matching fixture for that saved prediction (try manual update).")
+                    # attempt to find fixture by team and date
+                    ta_id, _ = find_team_id(team_a)
+                    tb_id, _ = find_team_id(team_b)
+                    if not ta_id or not tb_id:
+                        st.error("Could not map teams to API IDs for auto-fetch.")
                     else:
-                        goals = found.get("goals", {})
-                        home_goals = goals.get("home")
-                        away_goals = goals.get("away")
-                        if home_goals is None or away_goals is None:
-                            st.info("Match not finished or scores not available yet.")
+                        url = f"{API_BASE}/fixtures?team={ta_id}&date={saved_date}"
+                        resp = requests.get(url, headers=HEADERS, timeout=12).json()
+                        fixtures = resp.get("response", [])
+                        found = None
+                        for fx in fixtures:
+                            home = fx['teams']['home']['name']
+                            away = fx['teams']['away']['name']
+                            if (team_a.lower() in home.lower() and team_b.lower() in away.lower()) or (team_a.lower() in away.lower() and team_b.lower() in home.lower()):
+                                found = fx
+                                break
+                        if not found:
+                            st.error("Could not find a matching fixture for that saved prediction (try manual update).")
                         else:
-                            if home_goals > away_goals:
-                                actual_result = found['teams']['home']['name']
-                            elif away_goals > home_goals:
-                                actual_result = found['teams']['away']['name']
+                            goals = found.get("goals", {})
+                            home_goals = goals.get("home")
+                            away_goals = goals.get("away")
+                            if home_goals is None or away_goals is None:
+                                st.info("Match not finished or scores not available yet.")
                             else:
-                                actual_result = "Draw"
-                            df.at[sel, 'actual_result'] = f"{home_goals}-{away_goals}"
-                            df.at[sel, 'outcome'] = "Correct" if df.at[sel, 'predicted_winner'] == actual_result else "Wrong"
-                            df.at[sel, 'updated_at'] = datetime.utcnow().isoformat()
-                            save_data(df)
-                            st.success(f"Updated! Actual: {actual_result} ({home_goals}-{away_goals}). Outcome set to {df.at[sel,'outcome']}.")
-                            st.experimental_rerun()
+                                if home_goals > away_goals:
+                                    actual_result = found['teams']['home']['name']
+                                elif away_goals > home_goals:
+                                    actual_result = found['teams']['away']['name']
+                                else:
+                                    actual_result = "Draw"
+                                df.at[sel, 'actual_result'] = f"{home_goals}-{away_goals}"
+                                df.at[sel, 'outcome'] = "Correct" if df.at[sel, 'predicted_winner'] == actual_result else "Wrong"
+                                df.at[sel, 'updated_at'] = datetime.utcnow().isoformat()
+                                save_data(df)
+                                st.success(f"Updated! Actual: {actual_result} ({home_goals}-{away_goals}). Outcome set to {df.at[sel,'outcome']}.")
+                                st.experimental_rerun()
                 except Exception as e:
                     st.error("Error fetching fixture: " + str(e))
 
 # ---------------- Insights Hub (Narrative) ----------------
 with menu[3]:
-    st.header("🧠 Insights Hub (Narrative Analysis)")
-    st.markdown("Type or pick two teams and get an analyst-style writeup comparing recent form, attack/defense and head-to-head.")
+    st.header("🧠 Insights Hub (Narrative)")
+    st.markdown("Type two teams and get an analyst-style narrative comparing form, attack/defence and head-to-head.")
 
-    # pick or type teams
     colA, colB = st.columns(2)
     with colA:
-        insight_team_a = st.text_input("Team A (type full name or pick from fixtures)", value="")
+        insight_team_a = st.text_input("Team A (full name)", value="")
     with colB:
-        insight_team_b = st.text_input("Team B", value="")
+        insight_team_b = st.text_input("Team B (full name)", value="")
 
     if st.button("Generate Insights"):
         if not insight_team_a or not insight_team_b:
@@ -433,9 +428,9 @@ with menu[3]:
                 if not ta_id or not tb_id:
                     st.error("Could not find one or both teams. Try clearer names.")
                 else:
-                    # recent form
                     ra = get_recent_matches(ta_id, last_n=6)
                     rb = get_recent_matches(tb_id, last_n=6)
+
                     def summarize_recent(matches, team_id):
                         played = 0
                         wins = draws = losses = 0
@@ -451,15 +446,21 @@ with menu[3]:
                             if team_id == home_id:
                                 g_for = goals.get("home")
                                 g_against = goals.get("away")
-                                if g_for > g_against: wins += 1
-                                elif g_for == g_against: draws += 1
-                                else: losses += 1
+                                if g_for > g_against:
+                                    wins += 1
+                                elif g_for == g_against:
+                                    draws += 1
+                                else:
+                                    losses += 1
                             else:
                                 g_for = goals.get("away")
                                 g_against = goals.get("home")
-                                if g_for > g_against: wins += 1
-                                elif g_for == g_against: draws += 1
-                                else: losses += 1
+                                if g_for > g_against:
+                                    wins += 1
+                                elif g_for == g_against:
+                                    draws += 1
+                                else:
+                                    losses += 1
                             played += 1
                             gf += (g_for or 0)
                             ga += (g_against or 0)
@@ -469,7 +470,6 @@ with menu[3]:
                     sa = summarize_recent(ra, ta_id)
                     sb = summarize_recent(rb, tb_id)
 
-                    # head to head
                     h2h = get_head_to_head(ta_id, tb_id, last_n=6)
                     h2h_summary = {"a_wins":0,"b_wins":0,"draws":0}
                     for m in h2h:
@@ -499,10 +499,8 @@ with menu[3]:
                         score_a += (sa['wins']*3 + sa['draws']) / max(1,sa['played'])
                     if sb['played']>0:
                         score_b += (sb['wins']*3 + sb['draws']) / max(1,sb['played'])
-                    # goals weight
-                    score_a += (sa['gf'] - sa['ga'])/max(1, sa['played'])
-                    score_b += (sb['gf'] - sb['ga'])/max(1, sb['played'])
-                    # h2h
+                    score_a += (sa['gf'] - sa['ga'])/max(1, sa['played']) if sa['played']>0 else 0
+                    score_b += (sb['gf'] - sb['ga'])/max(1, sb['played']) if sb['played']>0 else 0
                     score_a += h2h_summary['a_wins']*0.5
                     score_b += h2h_summary['b_wins']*0.5
 
@@ -514,7 +512,6 @@ with menu[3]:
                         pred = "Draw"
                     conf = min(0.99, max(0.05, 0.5 + (abs(score_a-score_b)/4)))
                     narrative.append(f"**Model says:** {pred} is more likely (confidence {conf*100:.1f}%).")
-                    # Friendly tips
                     tips = []
                     if sa['played'] < 3:
                         tips.append(f"{ta_name} has limited recent matches — be cautious.")
@@ -531,6 +528,6 @@ with menu[3]:
                         for t in tips:
                             st.markdown(f"- {t}")
 
-# End of file
+# End — footer
 st.markdown("---")
-st.caption("PredictX Pro Ultra V3 — Built for worldwide analysis. Keep your API key safe and regenerate it if shared.")
+st.caption("PredictX Pro Ultra — replace API key in app.py and keep it private.")
