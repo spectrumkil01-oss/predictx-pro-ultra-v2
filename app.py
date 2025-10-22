@@ -305,6 +305,16 @@ with menu[1]:
         sid = st.text_input("Enter prediction ID to update (see table above)", value="")
         if sid:
             try:
+    csv_buf = io.StringIO()
+    df.to_csv(csv_buf, index=False)
+    st.download_button(
+        "Download Predictions CSV",
+        data=csv_buf.getvalue(),
+        file_name="predictions.csv",
+        mime="text/csv"
+    )
+except Exception as e:
+    st.error(f"⚠️ Error generating CSV: {e}")
                 sid_int = int(sid)
                 idx = df.index[df['id'].astype(int) == sid_int]
                 if idx.empty:
